@@ -1,65 +1,154 @@
-import Image from "next/image";
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { useChatStore, useSettingsStore } from '@/store';
+import { useTheme } from 'next-themes';
+import { Sidebar } from '@/components/layout/sidebar';
+import { ChatArea } from '@/components/chat/chat-area';
+import { SettingsDialog } from '@/components/settings/settings-dialog';
+import { useKeyboardShortcuts } from '@/hooks/use-keyboard';
+import { Menu, PanelLeftOpen } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { STORAGE_KEYS } from '@/lib/constants';
 
 export default function Home() {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isSidebarReady, setIsSidebarReady] = useState(false);
+
+  const toggleSidebar = useCallback((open: boolean) => {
+    setSidebarOpen(open);
+    localStorage.setItem(STORAGE_KEYS.sidebar, open ? 'open' : 'closed');
+  }, []);
+
+  const hydrateChat = useChatStore((s) => s.hydrate);
+  const hydrateSettings = useSettingsStore((s) => s.hydrate);
+  const isChatHydrated = useChatStore((s) => s.isHydrated);
+  const isSettingsHydrated = useSettingsStore((s) => s.isHydrated);
+  const settings = useSettingsStore((s) => s.settings);
+  const { setTheme } = useTheme();
+  const isStreaming = useChatStore((s) => s.streaming.isStreaming);
+  const stopStreaming = useChatStore((s) => s.stopStreaming);
+
+  useEffect(() => {
+    Promise.all([hydrateChat(), hydrateSettings()]);
+  }, [hydrateChat, hydrateSettings]);
+
+  useEffect(() => {
+    const sidebarPreference = localStorage.getItem(STORAGE_KEYS.sidebar);
+    const isMobile = window.matchMedia('(max-width: 1023px)').matches;
+    const animationFrame = requestAnimationFrame(() => {
+      setSidebarOpen(isMobile ? false : sidebarPreference !== 'closed');
+      setIsSidebarReady(true);
+    });
+    return () => cancelAnimationFrame(animationFrame);
+  }, []);
+
+  useEffect(() => {
+    if (isSettingsHydrated && settings.theme) {
+      setTheme(settings.theme);
+    }
+  }, [isSettingsHydrated, settings.theme, setTheme]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    let layoutHeight = Math.max(window.innerHeight, viewport.height);
+
+    const syncVisualViewport = () => {
+      const minimumUsableHeight = Math.max(180, layoutHeight * 0.35);
+      if (!Number.isFinite(viewport.height) || viewport.height < minimumUsableHeight) return;
+      const viewportReduction = Math.max(0, layoutHeight - viewport.height);
+      const keyboardInset = viewportReduction > 80 ? viewportReduction : 0;
+
+      document.documentElement.style.setProperty('--app-layout-height', `${layoutHeight}px`);
+      document.documentElement.style.setProperty('--keyboard-inset', `${keyboardInset}px`);
+    };
+
+    const resetLayoutHeight = () => {
+      window.setTimeout(() => {
+        layoutHeight = Math.max(window.innerHeight, viewport.height);
+        syncVisualViewport();
+      }, 150);
+    };
+
+    syncVisualViewport();
+    viewport.addEventListener('resize', syncVisualViewport);
+    window.addEventListener('focusin', syncVisualViewport);
+    window.addEventListener('focusout', syncVisualViewport);
+    window.addEventListener('orientationchange', resetLayoutHeight);
+    return () => {
+      viewport.removeEventListener('resize', syncVisualViewport);
+      window.removeEventListener('focusin', syncVisualViewport);
+      window.removeEventListener('focusout', syncVisualViewport);
+      window.removeEventListener('orientationchange', resetLayoutHeight);
+      document.documentElement.style.removeProperty('--app-layout-height');
+      document.documentElement.style.removeProperty('--keyboard-inset');
+    };
+  }, []);
+
+  useKeyboardShortcuts({
+    onNewChat: () => useChatStore.getState().setActiveConversation(null),
+    onStop: stopStreaming,
+    onCloseSidebar: () => toggleSidebar(false),
+    isStreaming,
+    sidebarOpen,
+  });
+
+  if (!isChatHydrated || !isSettingsHydrated || !isSidebarReady) {
+    return <div className="h-screen bg-background" aria-hidden="true" />;
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div
+      className="relative flex overflow-hidden bg-background"
+      style={{
+        height: 'var(--app-layout-height, 100dvh)',
+      }}
+    >
+      <div
+        className={cn(
+          'fixed inset-0 z-40 bg-black/50 lg:hidden transition-opacity',
+          sidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        )}
+        onClick={() => toggleSidebar(false)}
+      />
+
+      <div
+        className={cn(
+          'fixed lg:relative z-50 h-full w-72 transition-[transform,width] duration-300',
+          sidebarOpen ? 'translate-x-0 lg:w-72' : '-translate-x-full lg:w-0 lg:overflow-hidden'
+        )}
+      >
+        <Sidebar
+          onOpenSettings={() => setSettingsOpen(true)}
+          onToggleSidebar={() => toggleSidebar(false)}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+      </div>
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="lg:hidden flex items-center gap-2 px-3 py-2.5 border-b border-border/15">
+          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => toggleSidebar(!sidebarOpen)}>
+            <Menu className="w-4 h-4" />
+            <span className="sr-only">切换侧边栏</span>
+          </Button>
+          <span className="text-xs font-medium text-muted-foreground">对话</span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <ChatArea />
+      </div>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      {!sidebarOpen && (
+        <button
+          className="hidden lg:flex fixed top-4 left-4 z-30 w-9 h-9 items-center justify-center rounded-xl bg-background border border-border/15 shadow-sm text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors"
+          onClick={() => toggleSidebar(true)}
+          aria-label="打开侧边栏"
+        >
+          <PanelLeftOpen className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 }
